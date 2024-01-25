@@ -1,0 +1,482 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+## Motivation
+We want to investigate the accidents in Barcelona. Our goal is to determine some key factors that are affecting accidents, the frequency and the severity of them, and we will examine that factors to see if there are some hidden confounding effects. Later, we will come up with some hypotheses and try to test them statistically. We will support our findings with plots to make them more meaningful.
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(ggplot2)
+library(data.table)
+library(magrittr) # Needed for %>% operator
+library(tidyr)
+library(dplyr)
+library(patchwork)
+library(scales)
+library(tinytex)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+accidents <- fread(file.path("data","accidents_2017.csv"), encoding = 'UTF-8')
+transport <- fread(file.path("data", "transports.csv"), encoding = 'UTF-8')
+population <- fread(file.path("data","population.csv"), encoding = 'UTF-8')
+deaths <- fread(file.path("data","deaths.csv"), encoding = 'UTF-8')
+unemployment <- fread(file.path("data","unemployment.csv"), encoding = 'UTF-8')
+
+```
+## Data Analysis
+We first plot the accidents in Barcelona by District.
+Next, we separate the population into minors, adults, and seniors to check if there is a larger population of driving age in Eixample.
+```{r message=FALSE, warning=FALSE, echo=FALSE,figures-side, fig.show="hold", out.width="50%"}
+par(mfrow=c(1,2))
+accidents[, sum(`Vehicles involved`), by=.(`District Name`)] %>% ggplot(aes(`District Name`, V1)) +scale_x_discrete(guide = guide_axis(n.dodge=3))+ geom_bar(stat = "identity")
+`%ni%` <- Negate(`%in%`)
+
+
+minors<-unique(population$Age)[1:which(unique(population$Age)=='15-19')] 
+adults<-unique(population$Age)[which(unique(population$Age)=='20-24'):which(unique(population$Age)=='55-59')]
+seniors<-unique(population$Age)[which(unique(population$Age)=='60-64'):which(unique(population$Age)=='>=95')]
+minor_pop<-population[which(population[,Age%in%minors])]
+adult_pop<-population[which(population[,Age%in%adults])]
+senior_pop<-population[which(population[,Age%in%seniors])]
+population[which(population[,Age%in%minors]),categ:='minor']
+population[which(population[,Age%in%adults]),categ:='adult']
+population[which(population[,Age%in%seniors]),categ:='senior']
+ggplot(data=population, aes(x=District.Name,y=Number))+scale_x_discrete(guide = guide_axis(n.dodge=3)) +
+geom_bar(stat="identity",position="stack",aes(colour=categ))
+tots<-population[,sum(Number),by=.(categ,District.Name)]
+total_sorted<-tots[order(tots$categ,tots$V1)]
+```
+As far as we can see, the difference between the population of Eixample and any other districts is not that high, but Eixample has a significantly higher number of accidents compared to others. Meanwhile, there is not much difference in the proportions of the working age population.
+
+We then analyzed the transport types and unemployment of each district to see if there is any clear reason.
+```{r message=FALSE, warning=FALSE,echo=FALSE,figures-side1, fig.show="hold", out.width="50%"}
+#str(transport)
+#head(transport)
+#unique(transport$Transport)
+total_transports<-transport[,.N,by=.(District.Name,Transport)]
+transport_distr=total_transports[order(total_transports$Transport,total_transports$N)]
+ggplot(data=transport_distr, aes(x=District.Name,y=N))+scale_x_discrete(guide = guide_axis(n.dodge=3))+
+geom_bar(stat="identity",position="stack",aes(colour=Transport)) + labs(x="District", y="Number of Transport")
+total_unemployed<-unemployment[,sum(Number),by=.(`District Name`)]
+unemployed_distr<-total_unemployed[order(total_unemployed$V1)]
+ggplot(data=unemployed_distr, aes(x=`District Name`,y=V1))+scale_x_discrete(guide = guide_axis(n.dodge=3)) +
+geom_bar(stat="identity",position="stack") + labs(x="District", y="Number of Unemployed")
+```
+From the graphs we see that although Eixample has the highest number of accidents,the number of transports is not the highest in this district. From the transport types and unemployment categorized by district, there seems to be no clear reason for either to affect accidents number. 
+
+
+```{r message=FALSE, warning=FALSE,echo=FALSE}
+total_accidents<-accidents[,.N,by=.(`Part of the day`)]
+t1<-total_accidents[order(total_accidents$`Part of the day`,N)]
+daily_acc<-accidents[,.N,by=.(Weekday)]
+t2<-daily_acc[order(daily_acc$N)]
+#head(accidents[,.N,by=.(`Part of the day`)])
+```
+
+```{r message=FALSE, warning=FALSE, ,echo=FALSE}
+l = head(accidents[,.N,Hour>7 & Hour<19])
+l[, `Number of accidents` := N]
+l[, N := NULL]
+l
+```
+We can also see that more accidents happen between 7am and 7pm, when early or late jobs would have commutes.
+The fewest number of accidents take place at Night
+
+```{r, out.width = "100px",echo=FALSE}
+#knitr::include_graphics("data/Barcelonamap.jpg")
+```
+
+
+
+
+```{r message=FALSE, warning=FALSE,echo=FALSE}
+accident_severity<-accidents[,.('mild'=sum(`Mild injuries`),'serious'=sum(`Serious injuries`)),by=.(`District Name`)]
+t11<-accident_severity[order(accident_severity$mild)]
+accident_severity<-accidents[,.('mild'=sum(`Mild injuries`),'serious'=sum(`Serious injuries`)),by=.(`Weekday`,`District Name`)]
+accident_severity<-accident_severity[which(accident_severity$`District Name`=="Eixample")]
+t22<-accident_severity[order(accident_severity$mild)]
+knitr::kable(list(t11, t22))
+```
+The above tables show 1) Accidents by District. 2) Accidents in Eixample by day
+We see that i) Eixample has more accidents than anywhere else and mild accidents in particular. ii) Eixample has more mild accidents on weekdays when it looks like traffic is slower and more crowded. iii) There isn't a great disparity but it looks like there are more serious accidents on Sundays when roads are less crowded.
+As Eixample is centrally located, any commute between districts would likely pass through here, explaining its high number of accidents. We will now examine the time distribution of the accidents.
+
+#### Example of Case where confounding factors are necessary to support claim or invalidate hypothesis
+
+
+Let's analyse the accidents in Barcelona with better visualization. 
+Open questions: which days and/or parts of days are more dangerous in terms of the number of accidents? Let's visualize on which weekdays more accidents happen. 
+As we can see the most number of accidents happen on Fridays, almost 0.87(STD) above the average accidents per weak. On Saturday and Sunday the least amount of accidents happen.
+
+Now let's look at the part of the day when accidents occur the most.On the most accident prone day over 50% of the accidents occur during afternoons. About 41% occur during Morning and less than 10% at nights. This trend is persistent over the entire week.
+```{r message=FALSE, warning=FALSE, echo=FALSE,figures-side3, fig.show="hold", out.width="33%"}
+weekdays <- accidents[, .N, by = `Weekday`]
+ggplot(weekdays, aes(x=reorder(`Weekday`, N), y = `N`)) + 
+  geom_bar(stat="identity", aes(fill=N), show.legend=FALSE) +
+  geom_label(aes(label= N)) + scale_y_continuous(labels=comma) + 
+  scale_fill_gradient(low="paleturquoise1", high="paleturquoise4") +
+  labs(x="Weekday", y="Number of Accidents", title="Most accidents happen on Fridays") +
+  theme_bw() + coord_flip()
+
+accidents_friday <- accidents %>% filter(Weekday== "Friday")
+daypart <- accidents_friday[, .N, by = `Part of the day`]
+daypart[, `N in %`:= (`N` / sum(N) * 100)] 
+daypart[,`N in %`:=  format(round(`N in %`, 2), nsmall = 1)]
+daypart[,`N in %`:=  as.numeric(`N in %`)]
+
+ggplot(daypart, aes(x=reorder(`Part of the day`, `N in %`), y = `N in %`)) + geom_bar(stat="identity", aes(fill = `N in %`), show.legend=FALSE) +
+  geom_label(aes(label= `N in %`)) + scale_y_continuous(labels=comma) + 
+  scale_fill_gradient(low="paleturquoise1", high="paleturquoise4") +
+  labs(x="Part of the day", y="% of Total Accidents", title="Friday nights are safer than the other parts of the day ") +
+  theme_bw() + coord_flip()
+
+daypart_weekly <- accidents[, .N, by = `Part of the day`]
+daypart_weekly[, `N in %`:= (`N` / sum(N) * 100)] 
+daypart_weekly[,`N in %`:=  format(round(`N in %`, 2), nsmall = 1)]
+daypart_weekly[,`N in %`:=  as.numeric(`N in %`)]
+
+ggplot(daypart_weekly, aes(x=reorder(`Part of the day`, `N in %`), y = `N in %`)) + geom_bar(stat="identity", aes(fill = `N in %`), show.legend=FALSE) +
+  geom_label(aes(label= `N in %`)) + scale_y_continuous(labels=comma) + 
+  scale_fill_gradient(low="paleturquoise1", high="paleturquoise4") +
+  labs(x="Part of the day", y="% of Total Accidents", title="Nights are the safest throughout entire week") +
+  theme_bw() + coord_flip()
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+weekdays[, `N in %`:= (`N` / sum(N) * 100)] 
+weekdays <- weekdays[order(weekdays$`N in %`),]
+stdev = sd(weekdays$`N in %`)
+#stdev
+weekdays[, `N in %`:= (`N in %` - mean(`N in %`))] 
+weekdays[, `N in %`:= (`N in %`/stdev )]   
+```
+
+**So as we saw Fridays are the most dangerous, Sundays the safest. Friday Afternoons are the most dangerous in terms of accidents number.Furthermore, the accident proportion over the part of days remains similar for the entire week.**
+
+Let's have a look on what proportion of total accidents account for serious injuries. And, on the other side, also let us see the proportion of serious injuries in all accidents over the parts of days.
+```{r message=FALSE, warning=FALSE, echo=FALSE,figures-side5, fig.show="hold", out.width="40%"}
+accidents_serious <- accidents %>% filter(!(`Serious injuries`== 0))
+daypart_serious <- accidents_serious[, .N, by = `Part of the day`]
+daypart_serious[, `N in %`:= (`N` / sum(N) * 100)] 
+
+prop_of_serious_intotal = daypart_serious$N/sum(daypart_weekly$N) *100
+daypart_serious[, `Serious injuries/Total accidents(%)` := (prop_of_serious_intotal)]
+daypart_serious[,`Serious injuries/Total accidents(%)`:=  format(round(`Serious injuries/Total accidents(%)`, 2), nsmall = 1)]
+daypart_serious[,`Serious injuries/Total accidents(%)`:=  as.numeric(`Serious injuries/Total accidents(%)`)]
+
+ggplot(daypart_serious, aes(x=reorder(`Part of the day`, `Serious injuries/Total accidents(%)`), y = `Serious injuries/Total accidents(%)`)) + 
+  geom_bar(stat="identity", aes(fill = `Serious injuries/Total accidents(%)`), show.legend=FALSE) +
+  geom_label(aes(label= `Serious injuries/Total accidents(%)`)) + scale_y_continuous(labels=comma) + 
+  scale_fill_gradient(low="paleturquoise1", high="paleturquoise4") +
+  labs(x="Part of the day", y="Serious accidents as a % of Total Accidents", title="The proportion of serious injuries is the lowest at nights") +
+  theme_bw() + coord_flip()
+daypart_serious <- daypart_serious [order(N),] 
+daypart_weekly  <- daypart_weekly [order(N),] 
+daypart_serious[, `Proportion of serious injuries` := (daypart_serious$N/daypart_weekly$N *100)]
+daypart_serious[,`Proportion of serious injuries`:=  format(round(`Proportion of serious injuries`, 2), nsmall = 1)]
+daypart_serious[,`Proportion of serious injuries`:=  as.numeric(`Proportion of serious injuries`)]
+
+ggplot(daypart_serious, aes(x=reorder(`Part of the day`, `Proportion of serious injuries`), y = `Proportion of serious injuries`)) + 
+  geom_bar(stat="identity", aes(fill = `Proportion of serious injuries`), show.legend=FALSE) +
+  geom_label(aes(label= `Proportion of serious injuries`)) + scale_y_continuous(labels=comma) + 
+  scale_fill_gradient(low="paleturquoise1", high="paleturquoise4") +
+  labs(x="Part of the day", y="% of Total Night Accidents", title="More %age of accidents occuring at night cause serious injuries") +
+  theme_bw() + coord_flip()
+
+```
+
+As we can see 3,2% of accidents occuring during nights are serious, which is the highest proportion. While mornings have the least proportion of serious injusries.
+When we only look at the proportion of serious injuries in total accidents we can see that nights are safer and assume that it's true
+However, by analyzing further, if we consider the number of accidents at each part of the day(serious accidents at a part of day/accidents at that part of day ), we can see that more proportion of total accidents occurring at night are serious. This is a paradox. So, blindly looking at a single data reveals wrong results.
+
+**We are interested in the safeness of two districts with different age proportions. We consider a comparison of mortality rates in Les Corts and Ciutat Vella.**
+
+
+
+```{r, echo=FALSE}
+#population[,.N,by=.(`District.Name`)]
+population1 <- population %>% filter(Year== c(2016, 2017))
+deaths1 <- deaths %>% filter(Year== c(2016, 2017))
+
+pop_district <- population1[,sum(`Number`),by=.(`Age`,`District.Name` ) ]
+death_district <- deaths1[,sum(`Number`),by=.(`Age`,`District.Name` )]
+
+k <- pop_district %>% filter(`District.Name`== "Les Corts" | `District.Name`== "Ciutat Vella")
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE,figures-side6, fig.show="hold", out.width="40%"}
+Total_annual_pop <-k[,sum(`V1`),by=.(`District.Name` ) ]  ##in two district
+ggplot(Total_annual_pop, aes(x=reorder(`District.Name`, V1), y = `V1`)) + geom_bar(stat="identity", aes(fill=V1), show.legend=FALSE) +
+  geom_label(aes(label= V1)) + scale_y_continuous(labels=comma) + 
+  scale_fill_gradient(low="paleturquoise1", high="paleturquoise4") +
+  labs(x="District", y="Number of Population", title="Ciutat Vella has higher population than Les Corts") +
+  theme_bw() + coord_flip()
+
+n <- death_district %>% filter(`District.Name`== "Les Corts" | `District.Name`== "Ciutat Vella")
+
+Total_annual_death <- n[,sum(`V1`),by=.(`District.Name` ) ]  ##in two district
+
+ggplot(Total_annual_death, aes(x=reorder(`District.Name`, V1), y = `V1`)) + geom_bar(stat="identity", aes(fill=V1), show.legend=FALSE) +
+  geom_label(aes(label= V1)) + scale_y_continuous(labels=comma) + 
+  scale_fill_gradient(low="paleturquoise1", high="paleturquoise4") +
+  labs(x="District", y="Number of Deaths", title="Ciutat Vella has less deaths than Les Corts") +
+  theme_bw() + coord_flip()
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE,figures-side7, fig.show="hold", out.width="40%"}
+#pop_district %>% filter(`District.Name`== "Ciutat Vella")
+names(Total_annual_death)[2]<-paste("Total deaths")
+names(Total_annual_pop)[2]<-paste("Total population")
+death_pop <- merge(Total_annual_pop, Total_annual_death, by = "District.Name", all = TRUE)
+
+death_pop[, `Crude mortality rate/100,000`:= (`Total deaths` / `Total population` * 100000)]
+death_pop[,`Crude mortality rate/100,000`:=  format(round(`Crude mortality rate/100,000`, 2), nsmall = 1)]
+death_pop[, `Crude mortality rate/100,000`:=  as.numeric(`Crude mortality rate/100,000`)]
+
+ggplot(death_pop, aes(x=reorder(`District.Name`, `Crude mortality rate/100,000`), y = `Crude mortality rate/100,000`)) + 
+  geom_bar(stat="identity", aes(fill=`Crude mortality rate/100,000`), show.legend=FALSE) +
+  geom_label(aes(label= `Crude mortality rate/100,000`)) + scale_y_continuous(labels=comma) + 
+  scale_fill_gradient(low="paleturquoise1", high="paleturquoise4") +
+  labs(x="District", y="Crude Mortality Rate", title="Ciutat Vella is a safer district") +
+  theme_bw() + coord_flip()
+
+long_pop <- dcast(k, ... ~ District.Name,  value.var = "V1")
+
+new_long_pop <- long_pop[1:12]
+#sum(rowSums( long_pop[13:20, 2] ))
+#sum(rowSums( long_pop[13:20, 3] ))
+oldpop <- data.frame(">=60", sum(rowSums( long_pop[13:20, 2] )),sum(rowSums( long_pop[13:20, 3] )) )
+names(oldpop) <- c("Age", "Ciutat Vella", "Les Corts")
+Pop_age <- rbind(new_long_pop, oldpop)
+
+Pop_age[, `% of total(Ciutat Vella)`:= ((`Ciutat Vella` / sum(`Ciutat Vella`)) *100)]
+Pop_age[, `% of total(Les Corts)`:= ((`Les Corts` / sum(`Les Corts`)) *100)]
+
+
+long_death <- dcast(n, ... ~ District.Name,  value.var = "V1")
+new_long_death <- long_death[1:12]
+olddeath <- data.frame(">=60", sum(rowSums( long_death[13:20, 2] )),sum(rowSums( long_death[13:20, 3] )) )
+names(olddeath) <- c("Age", "Ciutat Vella", "Les Corts")
+Pop_death <- rbind(new_long_death, olddeath)
+Pop_death[, `% of total(Ciutat Vella)`:= ((`Ciutat Vella` / sum(`Ciutat Vella`)) *100)]
+Pop_death[, `% of total(Les Corts)`:= ((`Les Corts` / sum(`Les Corts`)) *100)]
+Pop_death[,`% of total(Ciutat Vella)`:=  format(round(`% of total(Ciutat Vella)`, 2), nsmall = 1)]
+Pop_death[, `% of total(Ciutat Vella)`:=  as.numeric(`% of total(Ciutat Vella)`)]
+Pop_death[,`% of total(Les Corts)`:=  format(round(`% of total(Les Corts)`, 2), nsmall = 1)]
+Pop_death[, `% of total(Les Corts)`:=  as.numeric(`% of total(Les Corts)`)]
+
+melt_pop_death <- Pop_death %>% filter(Age==">=60")
+melt_pop_death[, `Les Corts`:= NULL]
+melt_pop_death[, `Age`:= NULL]
+melt_pop_death[, `Ciutat Vella`:= NULL]
+melt_pop_death <- melt(melt_pop_death, variable.name = "District", value.name = "% of Deaths of Elderly" )
+
+ggplot(melt_pop_death, aes(x=reorder(`District`, `% of Deaths of Elderly`), y = `% of Deaths of Elderly`)) + 
+  geom_bar(stat="identity", aes(fill=`% of Deaths of Elderly`), show.legend=FALSE) +
+  geom_label(aes(label= `% of Deaths of Elderly`)) + scale_y_continuous(labels=comma) + 
+  scale_fill_gradient(low="paleturquoise1", high="paleturquoise4") +
+  labs(x="District", y="% of elderly people in total", title="Les Corts has a larger proportion of elderly") +
+  theme_bw() + coord_flip()
+```
+
+
+The crude mortality ratio is 966,22/763,76= 1,26. Does this mean it is riskier to live in Les Corts?
+Since older age is clearly a risk factor for death, we introduced a third variable(differences in age) to see if this might be a confounding factor. It is noteworthy, besides the obvious difference in total population size, there is a difference in the age distribution of the two districts. Cortes has a larger proportion of older people(which contribute to higher number of deaths) and Ciutat Vella has a greater proportion of younger people. Hence, one will be mistaken to claim that Les Corts is more riskier only by considering difference in total deaths.
+
+## Hypothesis Testing
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+accidents_dt<-accidents %>% mutate(`Day/Night`=ifelse(Hour>=18|Hour<=6,"Night","Day"))
+
+dailyrates<-accidents_dt[,.N/12,by=.(Month,Day,`Day/Night`)]#Simply the daily number of accidents
+names(dailyrates)[4]="accident_rate"
+
+accidents_dt[,milds:=ifelse(`Mild injuries`>`Serious injuries`,1,0)]
+dailyser<-accidents_dt[,.(mildrate=sum(milds)/(.N*12),serrate=sum((1-milds))/(.N*12)),by=.(Month,Day,Weekday,`Day/Night`)]#Rate of mild and serious accidents for each day/night
+```
+### 1) Are there more accidents during the day  2) Are there more accidents on weekdays than weekends?
+(1)The null hypothesis is that the average number of accidents is the same during night and day.             (2)The null hypothesis is that the average number of accidents is the same during Weekends and Weekdays.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE,figures-side8, fig.show="hold", out.width="30%"}
+# Function to calculate the differences of the ratios of serious injuries according to day and night 
+calc_ratio <- function(dt){
+(dt[`Day/Night` == 'Day', mean(`accident_rate`)]) -
+(dt[`Day/Night`== 'Night', mean(accident_rate)])
+}
+
+# Function to permute the table, plot the resulting histogram
+# and compute a p-value
+p_val_means <- function(dt, N_permu = 1000){
+# It will return both a pvalue and plot a histogram of T_star
+T_ref <- calc_ratio(dt)
+T_star <- sapply(1:N_permu, function(x){
+calc_ratio(dt[, `Day/Night` := sample(`Day/Night`)]) })
+# Plot
+
+# Compute and return the p value
+# First compute each tail seperately
+p_val_right <- (sum(T_star >= T_ref) + 1) / (N_permu + 1)
+p_val_left <- (sum(T_star <= T_ref) + 1) / (N_permu + 1)
+# Then combine the above to obtain the double sided p-value.
+p_val <- 2 * min(p_val_right, p_val_left)
+g <- ggplot(data = data.table(T_star = T_star), aes(T_star)) + geom_histogram() + ggtitle(cat("p-value=",p_val))+
+geom_vline(aes(xintercept=T_ref, color="T_ref")) 
+print(g) # Needed to render plot inside function call
+return(p_val)
+}
+# Calling the function:
+p1<-p_val_means(dailyrates)
+
+rm(T_ref,T_star,p_val_right,p_val_left,p_val)
+dailyrates<-accidents_dt[,.N/12,by=.(Month,Day,Weekday,`Day/Night`)]#Simply the daily number of accidents
+names(dailyrates)[5]="accident_rate"
+
+
+# Function to calculate the differences of the ratios of serious injuries according to day and night 
+calc_ratio <- function(dt){
+(dt[`Day/Night` == 'Day' & Weekday%ni%c("Sunday","Saturday"), mean(`accident_rate`)]) -
+(dt[`Day/Night`== 'Day' & Weekday%in%c("Sunday","Saturday"), mean(accident_rate)])
+}
+
+p_val_means <- function(dt, N_permu = 1000){
+
+T_ref <- calc_ratio(dt)
+T_star <- sapply(1:N_permu, function(x){
+calc_ratio(dt[, `accident_rate` := sample(`accident_rate`)]) })
+
+p_val_right <- (sum(T_star >= T_ref) + 1) / (N_permu + 1)
+p_val_left <- (sum(T_star <= T_ref) + 1) / (N_permu + 1)
+p_val <- 2 * min(p_val_right, p_val_left)
+g <- ggplot(data = data.table(T_star = T_star), aes(T_star)) + geom_histogram() +ggtitle(cat("p-value=",p_val))+
+geom_vline(aes(xintercept=T_ref, color="T_ref")) 
+print(g) 
+return(p_val)
+}
+
+p2<-p_val_means(dailyrates)
+```
+
+With these p value we can easily reject the null hypotheses and say that there are more accidents in the day on average, and there are definitely more accidents on weekdays during the daytime/working hours.
+
+### 3) Are there more severe accidents on the weekends? 4) Are there more serious accidents at night?
+
+(3)The null hypothesis is that the average number of serious accidents is the same for weekends and weekdays.
+(4)The null hypothesis is that the average number of serious accidents is the same for Day and Night.
+```{r message=FALSE, warning=FALSE, echo=FALSE,figures-side9, fig.show="hold", out.width="30%"}
+# Function to calculate the differences of the ratios of serious injuries according to day and night 
+rm(T_ref,T_star,p_val_right,p_val_left,p_val)
+calc_ratio <- function(dt){
+(dt[Weekday%in%c("Saturday","Sunday"), mean(serrate)]) -
+(dt[Weekday%ni%c("Saturday","Sunday"), mean(serrate)])
+}
+
+# Function to permute the table, plot the resulting histogram
+# and compute a p-value
+p_val_means <- function(dt, N_permu = 1000){
+# It will return both a pvalue and plot a histogram of T_star
+T_ref <- calc_ratio(dt)
+T_star <- sapply(1:N_permu, function(x){
+calc_ratio(dt[, `serrate` := sample(`serrate`)]) })
+# Plot
+ # Needed to render plot inside function call
+# Compute and return the p value
+# First compute each tail seperately
+p_val_right <- (sum(T_star >= T_ref) + 1) / (N_permu + 1)
+p_val_left <- (sum(T_star <= T_ref) + 1) / (N_permu + 1)
+# Then combine the above to obtain the double sided p-value.
+p_val <- 2 * min(p_val_right, p_val_left)
+g <- ggplot(data = data.table(T_star = T_star), aes(T_star))+labs(title=p_val) + geom_histogram() +ggtitle(cat("p-value=",p_val))+
+geom_vline(aes(xintercept=T_ref, color="T_ref")) 
+print(g)
+return(p_val)
+}
+# Calling the function:
+p3<-p_val_means(dailyser)
+
+# Function to calculate the differences of the ratios of serious injuries according to day and night 
+rm(T_ref,T_star,p_val_right,p_val_left,p_val)
+dailyser<-accidents_dt[,.(mildrate=sum(milds)/(.N*12),serrate=sum((1-milds))/(.N*12)),by=.(Month,Day,Weekday,`Day/Night`)]#Rate of mild and serious accidents for each day/night we recalculate this as it was permuted 
+calc_ratio <- function(dt){
+(dt[`Day/Night`=="Night", mean(serrate)]) -
+(dt[`Day/Night`=="Day", mean(serrate)])
+}
+
+# Function to permute the table, plot the resulting histogram
+# and compute a p-value
+p_val_means <- function(dt, N_permu = 1000){
+# It will return both a pvalue and plot a histogram of T_star
+T_ref <- calc_ratio(dt)
+T_star <- sapply(1:N_permu, function(x){
+calc_ratio(dt[, `serrate` := sample(`serrate`)]) })
+# Plot
+
+# Compute and return the p value
+# First compute each tail seperately
+p_val_right <- (sum(T_star >= T_ref) + 1) / (N_permu + 1)
+p_val_left <- (sum(T_star <= T_ref) + 1) / (N_permu + 1)
+# Then combine the above to obtain the double sided p-value.
+p_val <- 2 * min(p_val_right, p_val_left)
+g <- ggplot(data = data.table(T_star = T_star), aes(T_star)) + geom_histogram()+ggtitle(cat("p-value=",p_val))+
+geom_vline(aes(xintercept=T_ref, color="T_ref")) 
+print(g) # Needed to render plot inside function call
+return(p_val)
+}
+# Calling the function:
+p4<-p_val_means(dailyser)
+```
+
+Looking at the p-values,we can reject the null hypotheses and state that there are more serious accidents on Weekends, and that there are more serious accidents at night This could be attributed to the fact that there are less vehicles on the road and less active traffic signals, hence there is more speeding.
+
+*These conclusions corroborate with our claim that more accidents occur in Eixample due to its central location.*
+
+## Statistically supported claim and visualization
+
+The aim of this part of the analysis to see whether there is an association between the number of transportation modes in the neighbourhoods and the accidents happening. 
+
+#### Motivation: To see the neighbourhood with higher number of transportation tend to have more accidents due to more traffic.
+For this purpose we need the accidents and transport datasets merged according to the neighbourhoods.
+
+*The data contained outliers and we cannot assume normality, that is the reason we use the Spearman Ranking Correlation test instead of Pearson correlation to check the association between two quantitative variables.*
+
+```{r message=FALSE, warning=FALSE, echo=FALSE,figures-side10, fig.show="hold", out.width="30%"}
+accidents[,Accidents:=.(sum(`Vehicles involved`)), by= `Neighborhood Name`]
+accidents2 <- unique(accidents[,Accidents, by= `Neighborhood Name`])
+trans_num <- transport[,.N, by=`Neighborhood.Name`]
+
+dt <-merge(accidents2, trans_num, by.x = "Neighborhood Name", by.y = "Neighborhood.Name", all=FALSE, allow.cartesian = TRUE)
+
+dt %>% ggplot(aes(N, Accidents)) + geom_point()+ geom_smooth(method='lm') + labs(x="Accidents", y="Number of Transports", title="An association between number of accidents and transport")  + scale_y_log10() + scale_x_log10()
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+cor_value <- cor.test(dt$N, dt$Accidents, method = "spearman")
+cor_value
+```
+
+*Our initial assumption about the positive correlation is right. Positive correlation of around 0,7 was detected with signifant P value.*
+
+However, there might be a third variable inducing this association. That is the reason we add the population to look at the proportional variables such as the number of transport per person and the ratio of accidents to population.
+Again as the data involves outliers, we cannot assume normality, therefore we use the Spearman's correlation test.
+```{r message=FALSE, warning=FALSE, echo=FALSE,figures-side11, fig.show="hold", out.width="30%"}
+p <- population[, .(Population = sum(Number)), by=.(`Neighborhood.Name`)]
+dt_m <-merge(dt, p, by.x = "Neighborhood Name", by.y = "Neighborhood.Name", all=FALSE, allow.cartesian = TRUE)
+
+
+dt_m[, .(N/Population, Accidents/Population)] %>% ggplot(aes(V1, V2)) + geom_point()+ labs(x="Accidents/Population", y="Number of Transports/Population", title="The association between number of accidents and transport declines") + scale_y_log10() + scale_x_log10()
+dt_m <- dt_m[, .(N/Population, Accidents/Population)]
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+cor_value2 <- cor.test(dt_m$V1, dt_m$V2, method = "spearman")
+cor_value2
+```
+
+**As we can see the correlation decreased to around 0.52 after adding the third variable, which can mean we have an example of common cause.**
+
+
+
+
+
+
